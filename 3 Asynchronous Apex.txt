@@ -1,0 +1,251 @@
+ASYNCHRONOUS APEX MODULE
+
+Use Future Methods:-
+
+AccountProcessor.apxc
+public without sharing class AccountProcessor {
+    
+    @future
+    public static void countContacts(List<Id> accountIds){
+        List<Account> accounts = [SELECT Id,(SELECT Id FROM Contacts) FROM Account WHERE Id IN :accountIds];
+        
+        for (Account acc: accounts){
+            acc.Number_Of_Contacts__c = acc.Contacts.size();
+        }    
+        
+        update accounts;
+    }
+
+}
+
+
+AccountProcessorTest.apxc
+@isTest
+private class AccountProcessorTest {
+    
+    @isTest
+    private static void countContactsTest() {
+        
+        // Load Test Data
+        List<Account> accounts = new List<Account>();
+        for(Integer i=0; i<300; i++) {
+            accounts.add(new Account(Name='Test Account' +i));
+        }
+        insert accounts;
+        
+        List<Contact> contacts = new List<Contact>();
+        List<Id> accountIds = new List<Id>();
+        for(Account acc: accounts) {
+            contacts.add(new Contact(FirstName=acc.Name, LastName='TestContact', AccountId=acc.Id));
+            accountIds.add(acc.Id);
+        }
+        insert contacts;
+        
+        
+        
+        // Do the test
+        Test.startTest();
+        AccountProcessor.countContacts(accountIds);
+        Test.stopTest();
+        
+        //Check result
+        List<Account> accs = [SELECT Id, Number_of_Contacts__c FROM Account];
+        for(Account acc : accs) {
+            System.assertEquals(1, acc.Number_of_Contacts__c, 'ERROR: At least 1 Account record with incorrect Contact');
+        }
+        
+        
+    }
+
+}
+
+
+Debug:-
+Map<Id, Account> accounts = new Map<Id, Account>([SELECT Id FROM Account]);
+List<Id> accountIds = new List<Id>(accounts.keyset());
+AccountProcessor.countContacts(accountIds);
+
+----------------------------------------------------------------------------------------------------------------------------
+Use Batch Apex
+
+LeadProcessor.apxc
+public without sharing class LeadProcessor implements Database.Batchable<sObject> {
+    
+    public Database.QueryLocator start(Database.BatchableContext dbc){
+        return Database.getQueryLocator([SELECT Id, Name FROM Lead]);
+    }
+    
+    public void execute(Database.BatchableContext dbc, List<Lead> leads) {
+        for (Lead l : leads){
+            l.LeadSource = 'Dreamforce';            
+        }
+        update leads;
+    }
+    
+    public void finish (Database.BatchableContext dbc){
+        System.debug('Done');
+    }
+
+}
+
+LeadProcessorTest.apxc
+@isTest
+public class LeadProcessorTest {
+    
+    @isTest
+    private static void testBatchClass() {
+        
+        //Load test data
+        List<Lead> leads = new List<Lead>();
+        for (Integer i=0; i<200; i++) {
+            leads.add(new Lead(LastName='Connock', Company='Salesforce'));
+        }
+        insert leads;
+        
+        //Perform the test
+        Test.startTest();
+        LeadProcessor lp = new LeadProcessor();
+        Id batchId = Database.executeBatch(lp, 200);
+        Test.stopTest();
+        
+        //Check the result
+        List<Lead> updatedLeads = [SELECT Id FROM Lead WHERE LeadSource = 'Dreamforce'];
+        System.assertEquals(200, updatedLeads.size(), 'ERROR:At least 1 Lead record not updated correctly');
+    }
+
+}
+----------------------------------------------------------------------------------------------------------------------------
+Control Processes with Queueable Apex
+
+AddPrimaryContact.apxc
+
+public without sharing class AddPrimaryContact implements Queueable {
+    
+    private Contact contact;
+    private String state;
+    
+    public AddPrimaryContact (Contact inputContact, String inputState) {
+        this.contact = inputContact;
+        this.state = inputState;
+    }
+    
+    public void execute(QueueableContext context){
+        
+        //Retrieve 200 Account records
+        List<Account> accounts = [SELECT Id FROM Account WHERE BillingState = :state LIMIT 200];
+        
+        //Create empty list of Contact records
+        List<Contact> contacts = new List<Contact>();
+        
+        //Iterate through the Account records
+        for (Account acc : accounts) {
+            
+            //Clone (copy) the Contact record, make the clone a child of the specific Account record
+            //and add to the list of Contacts
+            Contact contactClone = contact.Clone();
+            contactClone.AccountId = acc.Id;
+            contacts.add(contactClone);
+        }
+        
+        insert contacts;
+        
+    }
+
+}
+
+
+AddPrimaryContactTest.apxc
+
+@isTest
+public class AddPrimaryContactTest {
+    
+    @isTest
+    private static void testQueueableClass() {
+        
+        //Load test data
+        List<Account> accounts = new List<Account>();
+        for (Integer i=0; i<500; i++) {
+            Account acc = new Account(Name='Test Account');
+            if ( i<250 ) {
+                acc.BillingState = 'NY';
+            } else {
+                acc.BillingState = 'CA';
+            }
+            accounts.add(acc);
+        }
+        insert accounts;
+        
+        Contact contact = new Contact(FirstName='Simon' ,LastName='Connock');
+        insert contact;
+        
+        //Perform the test
+        Test.startTest();
+        Id jobId = System.enqueueJob(new AddPrimaryContact(Contact, 'CA'));
+        Test.stopTest();
+        
+        //Check the result
+        List<Contact> contacts = [SELECT Id FROM Contact WHERE Contact.Account.BillingState = 'CA'];
+        System.assertEquals(200, contacts.size(), 'ERROR: Incorrect number of Contact records found');   
+    }
+
+}
+
+----------------------------------------------------------------------------------------------------------------------------
+Schedule Jobs Using the Apex Scheduler
+
+DailyLeadProcessor.apxc
+public without sharing class DailyLeadProcessor implements Schedulable {
+    
+    public void execute(SchedulableContext ctx){
+        //System.debug('Context ' + ctx.getTriggerId()); //Returns the ID of the CronTrigger schedule
+        
+        //Get 200 Lead records and modify the LeadSource field
+        List<Lead> leads =  [SELECT Id, LeadSource FROM Lead WHERE LeadSource = null LIMIT 200];
+        for ( Lead l : leads) {
+            l.LeadSource = 'Dreamforce';
+        }
+        
+        //Update the modified records
+        update leads;
+        
+        
+    }
+
+}
+
+
+DailyLeadProcessorTest.apxc
+@isTest
+public class DailyLeadProcessorTest {
+    
+    private static String CRON_EXP = '0 0 0 ? * * *'; // Midnight every day
+    
+    @isTest
+    private static void testScheduleClass(){
+        
+        //Load test data
+        List<Lead> leads = new List<Lead>();
+        for (Integer i=0; i<500; i++) {
+            if( i<250 ) {
+                leads.add(new Lead(LastName='Connock', Company='Salesforce'));
+            } else {
+                leads.add(new Lead(LastName='Connock', Company='Salesforce', Leadsource='Other'));   
+            }
+        }
+        insert leads;
+        
+        //Perform the test
+        Test.startTest();
+        String jobId = System.schedule('Process Leads', CRON_EXP, new DailyLeadProcessor());
+        Test.stopTest();
+        
+        //Check the result
+        List<Lead> updateLeads = [SELECT Id, LeadSource FROM Lead WHERE LeadSource = 'Dreamforce'];
+        System.assertEquals(200, updateLeads.size(), 'ERROR:At least 1 record not updated correctly');
+        
+        //Check the scheduled time
+        List<CronTrigger> cts = [SELECT Id, TimesTriggered, NextFireTime FROM CronTrigger WHERE Id = :jobId];
+        system.debug('Next Fire Time ' + cts[0].NextFireTime);
+     }
+}
+

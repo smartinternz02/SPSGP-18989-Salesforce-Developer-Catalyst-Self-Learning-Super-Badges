@@ -1,0 +1,136 @@
+APEX TESTING MODULE
+
+Get Started with Apex Unit Tests:-
+
+1)VerifyDate.apxc
+public class VerifyDate {
+	
+	//method to handle potential checks against two dates
+	public static Date CheckDates(Date date1, Date date2) {
+		//if date2 is within the next 30 days of date1, use date2.  Otherwise use the end of the month
+		if(DateWithin30Days(date1,date2)) {
+			return date2;
+		} else {
+			return SetEndOfMonthDate(date1);
+		}
+	}
+	
+	//method to check if date2 is within the next 30 days of date1
+	private static Boolean DateWithin30Days(Date date1, Date date2) {
+		//check for date2 being in the past
+        	if( date2 < date1) { return false; }
+        
+        	//check that date2 is within (>=) 30 days of date1
+        	Date date30Days = date1.addDays(30); //create a date 30 days away from date1
+		if( date2 >= date30Days ) { return false; }
+		else { return true; }
+	}
+
+	//method to return the end of the month of a given date
+	private static Date SetEndOfMonthDate(Date date1) {
+		Integer totalDays = Date.daysInMonth(date1.year(), date1.month());
+		Date lastDay = Date.newInstance(date1.year(), date1.month(), totalDays);
+		return lastDay;
+	}
+
+}
+
+_____________________________________________________________________________________________________________________________________________________
+
+2)TestVerifyDate.apxc
+
+@isTest
+public class TestVerifyDate {
+    
+    @isTest static void test1(){
+        Date d=VerifyDate.CheckDates(Date.parse('01/01/2020'),Date.parse('01/03/2020'));
+        System.assertEquals(Date.parse('01/03/2020'), d);
+    }
+    
+    @isTest static void test2(){
+        Date d=VerifyDate.CheckDates(Date.parse('01/01/2020'),Date.parse('03/03/2020'));
+        System.assertEquals(Date.parse('01/31/2020'), d);
+    }
+
+}
+
+_____________________________________________________________________________________________________________________________________________________
+Test Apex Triggers:-
+
+3)RestrictContactByName.apxt
+
+trigger RestrictContactByName on Contact (before insert, before update) {
+	
+	//check contacts prior to insert or update for invalid data
+	For (Contact c : Trigger.New) {
+		if(c.LastName == 'INVALIDNAME') {	//invalidname is invalid
+			c.AddError('The Last Name "'+c.LastName+'" is not allowed for DML');
+		}
+
+	}
+
+
+
+}
+
+_____________________________________________________________________________________________________________________________________________________
+
+4)TestRestrictContactByName.apxc
+@isTest
+public class TestRestrictContactByName {
+    
+    @isTest
+    public static void testContact(){
+        Contact ct=new Contact();
+        ct.LastName = 'INVALIDNAME';
+        Database.SaveResult res = Database.insert(ct,false);
+        System.assertEquals('The Last Name "INVALIDNAME" is not allowed for DML',res.getErrors()[0].getMessage());
+    }
+
+}
+
+_____________________________________________________________________________________________________________________________________________________
+Create Test Data for Apex Tests:-
+
+5)RandomContactFactory.apxc
+public class RandomContactFactory {
+    
+    public static List<Contact> generateRandomContacts(Integer num, String lastName){
+        List<Contact> contactList = new List<Contact>();
+        for(Integer i=1;i<=num;i++){
+            Contact ct = new Contact(FirstName = 'Test '+i, LastName =lastName);
+            contactList.add(ct);
+        }
+        return contactList;
+    }
+
+}
+_____________________________________________________________________________________________________________________________________________________
+
+6)TestDataFactory.apxc
+@isTest
+public class TestDataFactory {
+    public static List<Account> createAccountsWithOpps(Integer numAccts, Integer numOppsPerAcct) {
+        List<Account> accts = new List<Account>();
+        for(Integer i=0;i<numAccts;i++) {
+            Account a = new Account(Name='TestAccount' + i);
+            accts.add(a);
+        }
+        insert accts;
+        List<Opportunity> opps = new List<Opportunity>();
+        for (Integer j=0;j<numAccts;j++) {
+            Account acct = accts[j];
+            // For each account just inserted, add opportunities
+            for (Integer k=0;k<numOppsPerAcct;k++) {
+                opps.add(new Opportunity(Name=acct.Name + ' Opportunity ' + k,
+                                       StageName='Prospecting',
+                                       CloseDate=System.today().addMonths(1),
+                                       AccountId=acct.Id));
+            }
+        }
+        // Insert all opportunities for all accounts.
+        insert opps;
+        return accts;
+    }
+}
+
